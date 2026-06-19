@@ -1,0 +1,16 @@
+{
+  "name": "training-relay-vps",
+  "version": "1.0.0",
+  "description": "ORUS POS Training Mode — WebSocket relay server",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "license": "UNLICENSED"
+}

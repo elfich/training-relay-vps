@@ -1,0 +1,22 @@
+[Unit]
+Description=ORUS POS Training Relay Standalone
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/orus-training-relay
+Environment=TRAINING_RELAY_PORT=8766
+Environment=TRAINING_RELAY_PUBLIC_URL=https://soporte.ademweb.eu
+ExecStart=/usr/bin/node /opt/orus-training-relay/server.js
+Restart=always
+RestartSec=5
+User=orus
+Group=orus
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
