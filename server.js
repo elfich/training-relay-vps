@@ -142,53 +142,118 @@ function viewerHtml(token, publicBaseUrl) {
   #status.connected { background:#2d6a2d; }
   #status.waiting { background:#6a5a00; }
   #status.error { background:#6a1e1e; }
-  #screen-wrap { flex:1; display:flex; align-items:center; justify-content:center; overflow:hidden; }
-  #screen { max-width:100%; max-height:100%; object-fit:contain; display:none; }
+  #screen-wrap { flex:1; display:flex; align-items:center; justify-content:center; overflow:hidden; position:relative; }
+  #screen { max-width:100%; max-height:100%; object-fit:contain; display:none; cursor:crosshair; touch-action:none; }
   #placeholder { text-align:center; color:#666; }
   #placeholder h2 { margin-bottom:8px; font-size:18px; }
+  #codec-info { font-size:11px; color:#555; margin-left:auto; }
 </style>
 </head>
 <body>
 <div id="header">
   <strong>ORUS POS · Soporte Remoto</strong>
   <span id="status">Conectando…</span>
+  <span id="codec-info"></span>
 </div>
 <div id="screen-wrap">
-  <img id="screen" alt="Pantalla remota">
+  <canvas id="screen" style="display:none"></canvas>
   <div id="placeholder"><h2>⏳ Esperando conexión de la tablet…</h2><p>Token: ${token.slice(0,8)}…</p></div>
 </div>
 <script>
 const token = ${JSON.stringify(token)};
 const wsBase = ${JSON.stringify(wsUrl)};
 const statusEl = document.getElementById('status');
-const screenEl = document.getElementById('screen');
+const canvas = document.getElementById('screen');
+const ctx = canvas.getContext('2d');
 const placeholder = document.getElementById('placeholder');
+const codecInfo = document.getElementById('codec-info');
 
 function setStatus(text, cls) {
   statusEl.textContent = text;
   statusEl.className = cls || '';
 }
 
+// ── WebCodecs H.264 decoder ──────────────────────────────────────────────────
+let decoder = null;
+let ws = null;
+
+function initDecoder() {
+  if (decoder) { try { decoder.close(); } catch(_){} }
+  decoder = new VideoDecoder({
+    output(frame) {
+      canvas.width = frame.displayWidth;
+      canvas.height = frame.displayHeight;
+      ctx.drawImage(frame, 0, 0);
+      frame.close();
+      canvas.style.display = 'block';
+      placeholder.style.display = 'none';
+      setStatus('Activo ✓', 'connected');
+    },
+    error(e) {
+      codecInfo.textContent = 'decoder error: ' + e.message;
+      // reiniciar decoder en el próximo keyframe
+      try { decoder.close(); } catch(_){}
+      decoder = null;
+    }
+  });
+  decoder.configure({ codec: 'avc1.42E01F', optimizeForLatency: true });
+  codecInfo.textContent = 'H.264 WebCodecs';
+}
+
+function decodeFrame(data, isKeyframe) {
+  if (!decoder || decoder.state === 'closed') {
+    if (!isKeyframe) return; // esperar keyframe para reiniciar
+    initDecoder();
+  }
+  if (decoder.decodeQueueSize > 10) return; // evitar acumulación
+  try {
+    const chunk = new EncodedVideoChunk({
+      type: isKeyframe ? 'key' : 'delta',
+      timestamp: performance.now() * 1000,
+      data: data
+    });
+    decoder.decode(chunk);
+  } catch(e) {
+    codecInfo.textContent = 'decode err: ' + e.message;
+    try { decoder.close(); } catch(_){}
+    decoder = null;
+  }
+}
+
+// ── Touch events → relay ─────────────────────────────────────────────────────
+function sendTouch(action, clientX, clientY) {
+  if (!ws || ws.readyState !== 1) return;
+  const rect = canvas.getBoundingClientRect();
+  const x = (clientX - rect.left) / rect.width;
+  const y = (clientY - rect.top) / rect.height;
+  ws.send(JSON.stringify({ type: 'touch', action, x, y }));
+}
+
+canvas.addEventListener('pointerdown', e => { e.preventDefault(); sendTouch('down', e.clientX, e.clientY); });
+canvas.addEventListener('pointermove', e => { if (e.buttons) { e.preventDefault(); sendTouch('move', e.clientX, e.clientY); } });
+canvas.addEventListener('pointerup',   e => { e.preventDefault(); sendTouch('up',   e.clientX, e.clientY); });
+
+// ── WebSocket ────────────────────────────────────────────────────────────────
 function connect() {
-  const ws = new WebSocket(wsBase + '/relay/viewer?token=' + encodeURIComponent(token));
+  ws = new WebSocket(wsBase + '/relay/viewer?token=' + encodeURIComponent(token));
   ws.binaryType = 'arraybuffer';
 
   ws.onopen = () => setStatus('Conectado — esperando tablet…', 'waiting');
 
   ws.onmessage = (e) => {
     if (e.data instanceof ArrayBuffer) {
-      // Binary frame: 1 byte header (keyframe flag) + JPEG data
-      const jpeg = e.data.byteLength > 1 ? e.data.slice(1) : e.data;
-      const blob = new Blob([jpeg], { type: 'image/jpeg' });
-      const url = URL.createObjectURL(blob);
-      const old = screenEl.src;
-      screenEl.src = url;
-      screenEl.style.display = 'block';
-      placeholder.style.display = 'none';
-      setStatus('Activo ✓', 'connected');
-      if (old && old.startsWith('blob:')) URL.revokeObjectURL(old);
+      if (e.data.byteLength < 2) return;
+      const view = new Uint8Array(e.data);
+      const isKeyframe = view[0] === 1;
+      const nalData = e.data.slice(1);
+
+      if (typeof VideoDecoder !== 'undefined') {
+        decodeFrame(nalData, isKeyframe);
+      } else {
+        codecInfo.textContent = 'WebCodecs no soportado en este navegador';
+        setStatus('Error: necesita Chrome/Edge/Safari', 'error');
+      }
     } else {
-      // Text frame: control message
       try {
         const msg = JSON.parse(e.data);
         if (msg.type === 'viewer_count') setStatus('Activo ✓ · ' + msg.count + ' viewer(s)', 'connected');
@@ -197,11 +262,11 @@ function connect() {
   };
 
   ws.onerror = () => setStatus('Error de conexión', 'error');
-
-  ws.onclose = (e) => {
+  ws.onclose = () => {
     setStatus('Desconectado — reconectando…', 'error');
-    screenEl.style.display = 'none';
+    canvas.style.display = 'none';
     placeholder.style.display = 'block';
+    if (decoder) { try { decoder.close(); } catch(_){} decoder = null; }
     setTimeout(connect, 3000);
   };
 }
