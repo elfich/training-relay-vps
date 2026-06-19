@@ -49,6 +49,82 @@ function sendJson(res, status, data) {
     res.end(body);
 }
 
+// ── Hub HTML page — fixed URL for support agents ─────────────────────────────
+function hubHtml(publicBaseUrl) {
+    return `<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ORUS POS · Soporte Remoto</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#111; color:#eee; font-family:sans-serif; padding:24px; }
+  h1 { font-size:20px; margin-bottom:4px; }
+  .sub { color:#888; font-size:13px; margin-bottom:24px; }
+  #list { display:flex; flex-direction:column; gap:12px; }
+  .card { background:#1e1e1e; border-radius:10px; padding:16px 20px; display:flex; align-items:center; justify-content:space-between; gap:16px; }
+  .info h2 { font-size:16px; margin-bottom:4px; }
+  .info .meta { font-size:12px; color:#888; }
+  .badge { font-size:11px; padding:2px 8px; border-radius:10px; font-weight:bold; }
+  .badge.PENDING { background:#6a5a00; color:#ffe; }
+  .badge.CONNECTED { background:#2d6a2d; color:#efe; }
+  .btn { background:#1976D2; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-size:14px; font-weight:bold; cursor:pointer; white-space:nowrap; }
+  .btn:hover { background:#1565C0; }
+  #empty { color:#555; text-align:center; margin-top:48px; font-size:16px; }
+  .refresh { font-size:12px; color:#555; text-align:right; margin-bottom:12px; }
+</style>
+</head>
+<body>
+<h1>ORUS POS · Soporte Remoto</h1>
+<p class="sub">Sesiones de formación activas</p>
+<div class="refresh" id="refresh-info">Actualizando…</div>
+<div id="list"></div>
+<div id="empty" style="display:none">No hay sesiones activas en este momento.<br>La tablet aparecerá aquí cuando active el modo formación.</div>
+<script>
+const base = ${JSON.stringify(publicBaseUrl)};
+
+function timeAgo(ms) {
+  const s = Math.floor((Date.now() - ms) / 1000);
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s/60) + 'm';
+  return Math.floor(s/3600) + 'h';
+}
+
+async function load() {
+  try {
+    const r = await fetch(base + '/api/training/requests');
+    const sessions = await r.json();
+    const list = document.getElementById('list');
+    const empty = document.getElementById('empty');
+    list.innerHTML = '';
+    if (!sessions.length) { empty.style.display = 'block'; return; }
+    empty.style.display = 'none';
+    for (const s of sessions) {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = \`
+        <div class="info">
+          <h2>\${s.businessName || s.terminalId}</h2>
+          <div class="meta">Terminal: \${s.terminalId} · Hace \${timeAgo(s.createdAt)} · <span class="badge \${s.status}">\${s.status}</span></div>
+        </div>
+        <button class="btn" onclick="window.open('\${s.viewerUrl}','_blank')">Conectar →</button>
+      \`;
+      list.appendChild(card);
+    }
+    document.getElementById('refresh-info').textContent = 'Actualizado: ' + new Date().toLocaleTimeString();
+  } catch(e) {
+    document.getElementById('refresh-info').textContent = 'Error al cargar: ' + e.message;
+  }
+}
+
+load();
+setInterval(load, 5000);
+</script>
+</body>
+</html>`;
+}
+
 // ── Viewer HTML page ─────────────────────────────────────────────────────────
 function viewerHtml(token, publicBaseUrl) {
     const wsUrl = publicBaseUrl.replace(/^https:\/\//, 'wss://').replace(/^http:\/\//, 'ws://');
@@ -180,6 +256,13 @@ const server = http.createServer((req, res) => {
                 viewerUrl: `${PUBLIC_BASE_URL}/relay/viewer?token=${encodeURIComponent(s.token)}`,
             }));
         return sendJson(res, 200, list);
+    }
+
+    // Hub page — support agent opens this fixed URL to see pending sessions
+    if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/hub')) {
+        const html = hubHtml(PUBLIC_BASE_URL);
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': Buffer.byteLength(html) });
+        return res.end(html);
     }
 
     // Viewer HTML page — opened in browser by support agent
