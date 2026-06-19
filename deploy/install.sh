@@ -30,7 +30,12 @@ if id "$SERVICE_USER" &>/dev/null; then
     info "Usuario '$SERVICE_USER' ya existe"
 else
     info "Creando usuario '$SERVICE_USER'..."
-    useradd -r -s /usr/sbin/nologin "$SERVICE_USER"
+    useradd -r -m -d /home/"$SERVICE_USER" -s /usr/sbin/nologin "$SERVICE_USER"
+fi
+# Asegura que el home exista aunque el usuario ya existiera sin él
+if [[ ! -d /home/$SERVICE_USER ]]; then
+    mkdir -p /home/"$SERVICE_USER"
+    chown "$SERVICE_USER:$SERVICE_USER" /home/"$SERVICE_USER"
 fi
 
 # ── 3. Directorio de instalación ─────────────────────────────────────────────
