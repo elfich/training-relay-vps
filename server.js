@@ -177,8 +177,9 @@ function connect() {
 
   ws.onmessage = (e) => {
     if (e.data instanceof ArrayBuffer) {
-      // Binary frame: JPEG
-      const blob = new Blob([e.data], { type: 'image/jpeg' });
+      // Binary frame: 1 byte header (keyframe flag) + JPEG data
+      const jpeg = e.data.byteLength > 1 ? e.data.slice(1) : e.data;
+      const blob = new Blob([jpeg], { type: 'image/jpeg' });
       const url = URL.createObjectURL(blob);
       const old = screenEl.src;
       screenEl.src = url;
