@@ -8,6 +8,7 @@ Type=simple
 WorkingDirectory=/opt/orus-training-relay
 Environment=TRAINING_RELAY_PORT=8766
 Environment=TRAINING_RELAY_PUBLIC_URL=https://soporte.ademweb.eu
+Environment=HUB_USERS=orus:orus2026
 ExecStart=/usr/bin/node /opt/orus-training-relay/server.js
 Restart=always
 RestartSec=5
