@@ -15,6 +15,31 @@ const PORT = parseInt(process.env.TRAINING_RELAY_PORT || '8766', 10);
 const PUBLIC_BASE_URL = (process.env.TRAINING_RELAY_PUBLIC_URL || 'https://soporte.ademweb.eu').replace(/\/$/, '');
 const SESSION_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
 
+// Hub Basic Auth — protects the session list from public access.
+// Only /api/training/requests and GET / require auth.
+// POST /api/training/request (tablet) and /relay/viewer?token=X (client) remain open.
+const HUB_USER     = process.env.HUB_USER     || 'orus';
+const HUB_PASSWORD = process.env.HUB_PASSWORD || 'orus2026';
+
+function requireHubAuth(req, res) {
+    const auth = req.headers['authorization'] || '';
+    if (!auth.startsWith('Basic ')) {
+        res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="ORUS Hub"', 'Content-Type': 'text/plain' });
+        res.end('Acceso no autorizado');
+        return false;
+    }
+    const decoded = Buffer.from(auth.slice(6), 'base64').toString();
+    const colonIdx = decoded.indexOf(':');
+    const user = colonIdx >= 0 ? decoded.slice(0, colonIdx) : decoded;
+    const pass = colonIdx >= 0 ? decoded.slice(colonIdx + 1) : '';
+    if (user !== HUB_USER || pass !== HUB_PASSWORD) {
+        res.writeHead(403, { 'Content-Type': 'text/plain' });
+        res.end('Credenciales incorrectas');
+        return false;
+    }
+    return true;
+}
+
 // sessions: Map<token, SessionEntry>
 const sessions = new Map();
 
@@ -307,6 +332,7 @@ const server = http.createServer((req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/training/requests') {
+        if (!requireHubAuth(req, res)) return;
         cleanupExpired();
         const list = [...sessions.values()]
             .filter(s => s.status === 'PENDING' || s.status === 'CONNECTED')
@@ -326,6 +352,7 @@ const server = http.createServer((req, res) => {
 
     // Hub page — support agent opens this fixed URL to see pending sessions
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/hub')) {
+        if (!requireHubAuth(req, res)) return;
         const html = hubHtml(PUBLIC_BASE_URL);
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': Buffer.byteLength(html) });
         return res.end(html);
