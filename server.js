@@ -18,8 +18,26 @@ const SESSION_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
 // Hub Basic Auth — protects the session list from public access.
 // Only /api/training/requests and GET / require auth.
 // POST /api/training/request (tablet) and /relay/viewer?token=X (client) remain open.
-const HUB_USER     = process.env.HUB_USER     || 'orus';
-const HUB_PASSWORD = process.env.HUB_PASSWORD || 'orus2026';
+//
+// Configure users via HUB_USERS env var: "user1:pass1,user2:pass2"
+// Falls back to HUB_USER / HUB_PASSWORD for single-user backward compatibility.
+function buildHubUsers() {
+    const raw = process.env.HUB_USERS || '';
+    if (raw.trim()) {
+        const map = new Map();
+        for (const entry of raw.split(',')) {
+            const colonIdx = entry.indexOf(':');
+            if (colonIdx < 1) continue;
+            map.set(entry.slice(0, colonIdx).trim(), entry.slice(colonIdx + 1).trim());
+        }
+        if (map.size > 0) return map;
+    }
+    // Fallback: single user via HUB_USER / HUB_PASSWORD
+    const user = process.env.HUB_USER     || 'orus';
+    const pass = process.env.HUB_PASSWORD || 'orus2026';
+    return new Map([[user, pass]]);
+}
+const HUB_USERS = buildHubUsers();
 
 function requireHubAuth(req, res) {
     const auth = req.headers['authorization'] || '';
@@ -32,7 +50,7 @@ function requireHubAuth(req, res) {
     const colonIdx = decoded.indexOf(':');
     const user = colonIdx >= 0 ? decoded.slice(0, colonIdx) : decoded;
     const pass = colonIdx >= 0 ? decoded.slice(colonIdx + 1) : '';
-    if (user !== HUB_USER || pass !== HUB_PASSWORD) {
+    if (!HUB_USERS.has(user) || HUB_USERS.get(user) !== pass) {
         res.writeHead(403, { 'Content-Type': 'text/plain' });
         res.end('Credenciales incorrectas');
         return false;
